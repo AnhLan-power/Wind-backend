@@ -37,17 +37,33 @@ def run_simulation_job(job_id, stl_bytes, wind_dir, speed, resolution, iteration
 
         mins = triangles.reshape(-1, 3).min(axis=0)
         maxs = triangles.reshape(-1, 3).max(axis=0)
-        # Mở rộng vùng khảo sát ra ngoài hình học 1 khoảng để gió có chỗ "thổi qua"
-        pad = (maxs - mins) * 0.6 + 1.0
+        size = maxs - mins
+        print(f"[wind] bbox hình học: size={size.tolist()}, tam giác={len(triangles)}")
+
+        # Vùng khảo sát: rộng hơn vật thể vừa đủ để gió có chỗ tăng tốc/tách
+        # dòng — không nới quá tay kẻo vật thể chỉ chiếm vài ô trên lưới thô,
+        # khiến voxel hoá bỏ sót hoàn toàn (chính là lỗi "gió xuyên qua vật").
+        pad_up = size[0] * 1.0 + 1.0     # phía đón gió
+        pad_down = size[0] * 2.0 + 1.0   # phía sau, chừa chỗ cho vệt gió khuất
+        pad_side = size[1:].max() * 0.5 + 1.0 if size[1:].max() > 0 else 2.0
+
+        if wind_dir[0] >= 0:
+            bx0, bx1 = mins[0] - pad_up, maxs[0] + pad_down
+        else:
+            bx0, bx1 = mins[0] - pad_down, maxs[0] + pad_up
         bounds = (
-            mins[0] - pad[0] * (2 if wind_dir[0] > 0 else 0.3) if wind_dir[0] >= 0 else mins[0] - pad[0] * 0.3,
-            maxs[0] + pad[0] * (0.3 if wind_dir[0] > 0 else 2),
-            mins[1] - pad[1] * 0.3, maxs[1] + pad[1] * 0.3,
-            mins[2] - pad[2] * 0.3, maxs[2] + pad[2] * 0.3,
+            bx0, bx1,
+            mins[1] - pad_side, maxs[1] + pad_side,
+            mins[2] - pad_side, maxs[2] + pad_side,
         )
 
         jobs[job_id]["status"] = "voxelizing"
         solid = build_solid_grid(triangles, bounds, resolution)
+        solid_count = int(solid.sum())
+        print(f"[wind] voxel hoá xong: {solid_count}/{solid.size} ô là vật cản ({100*solid_count/solid.size:.1f}%)")
+        if solid_count == 0:
+            print("[wind] ⚠️ CẢNH BÁO: không ô nào được nhận là vật cản — gió sẽ đi thẳng, "
+                  "khả năng do độ phân giải quá thô hoặc hình học quá mỏng/rời rạc so với lưới.")
 
         jobs[job_id]["status"] = "solving"
 
@@ -86,7 +102,7 @@ def simulate():
 
     dir_deg = float(request.form.get("dirDeg", 0))
     speed = float(request.form.get("speed", 5))
-    res = int(request.form.get("resolution", 24))       # mỗi chiều, mặc định nhỏ để chạy vừa free tier
+    res = int(request.form.get("resolution", 32))       # mỗi chiều, mặc định vừa phải cho free tier
     iterations = int(request.form.get("iterations", 60))
     seed_count = int(request.form.get("seedCount", 5))   # lưới hạt gieo NxN
 
