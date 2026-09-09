@@ -20,7 +20,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import numpy as np
 
-from solver import parse_binary_stl, build_solid_grid, run_stable_fluids_3d, trace_streamlines
+from solver import parse_binary_stl, build_solid_grid, mark_surface_cells, run_stable_fluids_3d, trace_streamlines
 
 app = Flask(__name__)
 CORS(app)  # cho phép gọi từ GitHub Pages / bất kỳ origin nào (siết lại sau nếu cần)
@@ -40,12 +40,14 @@ def run_simulation_job(job_id, stl_bytes, wind_dir, speed, resolution, iteration
         size = maxs - mins
         print(f"[wind] bbox hình học: size={size.tolist()}, tam giác={len(triangles)}")
 
-        # Vùng khảo sát: rộng hơn vật thể vừa đủ để gió có chỗ tăng tốc/tách
-        # dòng — không nới quá tay kẻo vật thể chỉ chiếm vài ô trên lưới thô,
-        # khiến voxel hoá bỏ sót hoàn toàn (chính là lỗi "gió xuyên qua vật").
-        pad_up = size[0] * 1.0 + 1.0     # phía đón gió
-        pad_down = size[0] * 2.0 + 1.0   # phía sau, chừa chỗ cho vệt gió khuất
-        pad_side = size[1:].max() * 0.5 + 1.0 if size[1:].max() > 0 else 2.0
+        # Vùng khảo sát SÁT vật thể hơn nhiều so với bản trước — nới quá tay
+        # khiến mỗi ô lưới đại diện vùng quá lớn, kết cấu mảnh (dàn/khung
+        # cầu) lọt qua hết. Ưu tiên độ phân giải quanh vật thể hơn là có
+        # domain thật lớn (đánh đổi hợp lý cho bản minh hoạ, không phải CFD
+        # chuẩn cần domain lớn theo quy chuẩn).
+        pad_up = size[0] * 0.3 + 1.0
+        pad_down = size[0] * 0.6 + 1.0
+        pad_side = size[1:].max() * 0.3 + 1.0 if size[1:].max() > 0 else 2.0
 
         if wind_dir[0] >= 0:
             bx0, bx1 = mins[0] - pad_up, maxs[0] + pad_down
@@ -58,9 +60,12 @@ def run_simulation_job(job_id, stl_bytes, wind_dir, speed, resolution, iteration
         )
 
         jobs[job_id]["status"] = "voxelizing"
-        solid = build_solid_grid(triangles, bounds, resolution)
+        solid_a = build_solid_grid(triangles, bounds, resolution)
+        solid_b = mark_surface_cells(triangles, bounds, resolution)
+        solid = solid_a | solid_b  # kết hợp cả 2 cách để không bỏ sót kết cấu mảnh
         solid_count = int(solid.sum())
-        print(f"[wind] voxel hoá xong: {solid_count}/{solid.size} ô là vật cản ({100*solid_count/solid.size:.1f}%)")
+        print(f"[wind] voxel hoá xong: {solid_count}/{solid.size} ô là vật cản ({100*solid_count/solid.size:.1f}%) "
+              f"[điểm-trong-khối: {int(solid_a.sum())}, bề mặt: {int(solid_b.sum())}]")
         if solid_count == 0:
             print("[wind] ⚠️ CẢNH BÁO: không ô nào được nhận là vật cản — gió sẽ đi thẳng, "
                   "khả năng do độ phân giải quá thô hoặc hình học quá mỏng/rời rạc so với lưới.")

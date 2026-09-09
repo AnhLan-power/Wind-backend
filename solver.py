@@ -78,6 +78,30 @@ def _ray_triangle_intersect_x(origin_yz, triangles):
     return x_hits
 
 
+def mark_surface_cells(triangles, bounds, resolution):
+    """
+    Đánh dấu trực tiếp các ô lưới có ĐỈNH tam giác nằm gần đó — không cần
+    hình học kín (watertight). Phù hợp với kết cấu dàn/khung/dầm mảnh
+    (nhiều khoảng hở thật sự giữa các thanh) mà cách "điểm nằm trong khối
+    kín" (build_solid_grid) dễ bỏ sót vì tưởng nhầm là rỗng.
+    """
+    from scipy.ndimage import binary_dilation
+    minx, maxx, miny, maxy, minz, maxz = bounds
+    nx, ny, nz = resolution
+    verts = triangles.reshape(-1, 3)
+
+    ix = np.clip(((verts[:, 0] - minx) / (maxx - minx) * (nx - 1)).astype(int), 0, nx - 1)
+    iy = np.clip(((verts[:, 1] - miny) / (maxy - miny) * (ny - 1)).astype(int), 0, ny - 1)
+    iz = np.clip(((verts[:, 2] - minz) / (maxz - minz) * (nz - 1)).astype(int), 0, nz - 1)
+
+    solid = np.zeros((nx, ny, nz), dtype=bool)
+    solid[ix, iy, iz] = True
+    # Nới rộng thêm 1 ô mỗi hướng để nối liền các khoảng hở nhỏ giữa các
+    # đỉnh tam giác liền kề (tránh "gió lọt qua khe" do lấy mẫu rời rạc).
+    solid = binary_dilation(solid, iterations=1)
+    return solid
+
+
 def build_solid_grid(triangles, bounds, resolution):
     """
     bounds: (minx, maxx, miny, maxy, minz, maxz)
