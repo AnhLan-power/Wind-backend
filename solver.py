@@ -169,7 +169,7 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
         div[solid] = 0
 
         p = np.zeros_like(u)
-        for _ in range(25):
+        for _ in range(35):
             p_new = p.copy()
             p_new[1:-1, 1:-1, 1:-1] = (
                 div[1:-1, 1:-1, 1:-1] +
