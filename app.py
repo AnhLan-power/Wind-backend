@@ -109,7 +109,7 @@ def simulate():
     speed = float(request.form.get("speed", 5))
     res = int(request.form.get("resolution", 36))       # mỗi chiều — đã tăng từ 32 lên 36
     iterations = int(request.form.get("iterations", 90)) # tăng từ 60 lên 90 để dòng chảy phát triển đầy đủ hơn
-    seed_count = int(request.form.get("seedCount", 8))   # tăng mật độ lưới hạt gieo từ 5x5 lên 8x8 (nhiều đường dòng hơn)
+    seed_count = int(request.form.get("seedCount", 14))  # tăng mật độ lưới hạt gieo lên 14x14 (dày như SimScale)
 
     rad = np.radians(dir_deg)
     wind_dir = (np.cos(rad), 0.0, np.sin(rad))
