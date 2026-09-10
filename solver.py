@@ -247,7 +247,12 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
     for step in range(iterations):
         u, v, w = enforce_boundary(u, v, w)
         u, v, w = project(u, v, w)
-        u, v, w = apply_vorticity_confinement(u, v, w, dt)
+        # Lực "bơm xoáy" giảm dần theo thời gian: mạnh lúc đầu để hình
+        # thành xoáy rõ, yếu dần về sau để hệ có cơ hội ổn định thay vì
+        # dao động mãi mãi ở mức cao (đúng nguyên nhân biểu đồ hội tụ
+        # trước đó không giảm được).
+        decay = 0.25 + 0.75 * max(0, 1 - step / iterations)
+        u, v, w = apply_vorticity_confinement(u, v, w, dt, epsilon=1.5 * decay)
         u2 = advect(u, u, v, w, dt)
         v2 = advect(v, u, v, w, dt)
         w2 = advect(w, u, v, w, dt)
@@ -264,6 +269,13 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
         u, v, w = enforce_boundary(u, v, w)
         if progress_cb:
             progress_cb(step + 1, iterations)
+
+    # Chuẩn hoá residual theo đúng quy ước CFD chuẩn (OpenFOAM/SimScale):
+    # chia cho giá trị residual đầu tiên -> biểu đồ luôn bắt đầu ở 1.0 rồi
+    # giảm dần, thay vì để nguyên giá trị tuyệt đối khó so sánh.
+    if residuals and residuals[0] > 0:
+        r0 = residuals[0]
+        residuals = [r / r0 for r in residuals]
 
     return u, v, w, residuals
 
