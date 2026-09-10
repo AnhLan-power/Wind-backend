@@ -185,7 +185,7 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
         w[1:-1, 1:-1, 1:-1] -= 0.5 * nx * (p[1:-1, 1:-1, 2:] - p[1:-1, 1:-1, :-2])
         return u, v, w
 
-    def advect(field, u, v, w, dt):
+    def advect_semilagrangian(field, u, v, w, dt):
         gx, gy, gz = np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij")
         src_x = np.clip(gx - dt * nx * u, 0.5, nx - 1.5)
         src_y = np.clip(gy - dt * ny * v, 0.5, ny - 1.5)
@@ -193,10 +193,59 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
         from scipy.ndimage import map_coordinates
         return map_coordinates(field, [src_x, src_y, src_z], order=1, mode="nearest")
 
+    def advect(field, u, v, w, dt):
+        """
+        MacCormack advection — chính xác hơn bán-Lagrange bậc 1 thường nhờ
+        bước dự đoán + hiệu chỉnh sai số 2 chiều, đỡ "mờ tan" xoáy hơn
+        nhiều. Có clamp để tránh dao động/mất ổn định số.
+        """
+        phi1 = advect_semilagrangian(field, u, v, w, dt)
+        phi2 = advect_semilagrangian(phi1, u, v, w, -dt)
+        result = phi1 + 0.5 * (field - phi2)
+
+        lo = field.copy()
+        hi = field.copy()
+        for ax in (0, 1, 2):
+            for shift in (1, -1):
+                shifted = np.roll(field, shift, axis=ax)
+                lo = np.minimum(lo, shifted)
+                hi = np.maximum(hi, shifted)
+        return np.clip(result, lo, hi)
+
+    def apply_vorticity_confinement(u, v, w, dt, epsilon=3.0):
+        """
+        Vorticity confinement (Fedkiw và cộng sự) — tính độ xoáy (curl) của
+        trường vận tốc rồi "bơm" thêm lực theo đúng hướng xoáy để bù lại
+        phần năng lượng xoáy bị khuếch tán số làm mất — nếu bỏ bước này,
+        xoáy sinh ra sẽ tự mờ dần rồi biến mất sau vài chục bước, đúng
+        hiện tượng đang gặp.
+        """
+        wx = np.gradient(w, axis=1) - np.gradient(v, axis=2)
+        wy = np.gradient(u, axis=2) - np.gradient(w, axis=0)
+        wz = np.gradient(v, axis=0) - np.gradient(u, axis=1)
+        wmag = np.sqrt(wx ** 2 + wy ** 2 + wz ** 2) + 1e-6
+
+        gx = np.gradient(wmag, axis=0)
+        gy = np.gradient(wmag, axis=1)
+        gz = np.gradient(wmag, axis=2)
+        glen = np.sqrt(gx ** 2 + gy ** 2 + gz ** 2) + 1e-6
+        nx_, ny_, nz_ = gx / glen, gy / glen, gz / glen
+
+        fx = epsilon * (ny_ * wz - nz_ * wy)
+        fy = epsilon * (nz_ * wx - nx_ * wz)
+        fz = epsilon * (nx_ * wy - ny_ * wx)
+
+        u2 = u + fx * dt
+        v2 = v + fy * dt
+        w2 = w + fz * dt
+        u2[solid] = 0; v2[solid] = 0; w2[solid] = 0
+        return u2, v2, w2
+
     dt = 0.1
     for step in range(iterations):
         u, v, w = enforce_boundary(u, v, w)
         u, v, w = project(u, v, w)
+        u, v, w = apply_vorticity_confinement(u, v, w, dt)
         u2 = advect(u, u, v, w, dt)
         v2 = advect(v, u, v, w, dt)
         w2 = advect(w, u, v, w, dt)
