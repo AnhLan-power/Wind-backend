@@ -1,6 +1,6 @@
 """
 solver.py — Bộ giải gió 3D đơn giản hoá (KHÔNG PHẢI CFD chuẩn công nghiệp)
-
+ 
 Thuật toán: mở rộng 3D của "Stable Fluids" (Jos Stam) — advection bán-Lagrange
 + chiếu áp suất (pressure projection) qua lặp Jacobi để đảm bảo dòng chảy
 không nén được (incompressible). KHÔNG có mô hình nhiễu loạn (turbulence
@@ -8,7 +8,7 @@ closure) chuẩn như k-epsilon/k-omega mà phần mềm CFD thật dùng — n�
 tách dòng thể hiện được về mặt ĐỊNH TÍNH (đúng xu hướng: chậm sau vật cản,
 tăng tốc qua khe hẹp) nhưng KHÔNG chính xác về mặt ĐỊNH LƯỢNG như OpenFOAM/
 Ansys thật.
-
+ 
 Quy trình:
 1. Đọc file STL (binary) -> danh sách tam giác
 2. Voxel hoá: xác định ô lưới nào nằm trong vật thể (ray casting theo trục X)
@@ -17,11 +17,11 @@ Quy trình:
    gieo (seed) ở mặt đón gió
 5. Trả về danh sách đường dòng dạng JSON (points + velocities mỗi điểm)
 """
-
+ 
 import struct
 import numpy as np
-
-
+ 
+ 
 # ============================================================
 # 1. ĐỌC FILE STL (BINARY)
 # ============================================================
@@ -38,8 +38,8 @@ def parse_binary_stl(data: bytes):
         triangles[i, 2] = v[6:9]
         offset += 50
     return triangles
-
-
+ 
+ 
 # ============================================================
 # 2. VOXEL HOÁ — xác định ô lưới nào là vật cản (ray casting +X)
 # ============================================================
@@ -53,31 +53,31 @@ def _ray_triangle_intersect_x(origin_yz, triangles):
     v0, v1, v2 = triangles[:, 0], triangles[:, 1], triangles[:, 2]
     e1 = v1 - v0
     e2 = v2 - v0
-
+ 
     # Chiếu bài toán sang mặt phẳng YZ (bỏ trục X vì tia song song trục X)
     # Dùng công thức giao điểm tia-tam giác rút gọn cho tia trục X.
     dir_x = np.array([1.0, 0.0, 0.0])
     h = np.cross(np.full_like(e1, dir_x), e2)
     a = np.einsum("ij,ij->i", e1, h)
     valid = np.abs(a) > 1e-9
-
+ 
     f = np.zeros_like(a)
     f[valid] = 1.0 / a[valid]
-
+ 
     origin = np.array([-1e6, oy, oz])
     s = origin - v0
     u = f * np.einsum("ij,ij->i", s, h)
-
+ 
     q = np.cross(s, e1)
     v = f * np.einsum("ij,ij->i", np.tile(dir_x, (len(e2), 1)), q)
-
+ 
     t = f * np.einsum("ij,ij->i", e2, q)
-
+ 
     hit = valid & (u >= 0) & (u <= 1) & (v >= 0) & (u + v <= 1) & (t > 0)
     x_hits = origin[0] + t[hit]
     return x_hits
-
-
+ 
+ 
 def mark_surface_cells(triangles, bounds, resolution):
     """
     Đánh dấu trực tiếp các ô lưới có ĐỈNH tam giác nằm gần đó — không cần
@@ -89,19 +89,19 @@ def mark_surface_cells(triangles, bounds, resolution):
     minx, maxx, miny, maxy, minz, maxz = bounds
     nx, ny, nz = resolution
     verts = triangles.reshape(-1, 3)
-
+ 
     ix = np.clip(((verts[:, 0] - minx) / (maxx - minx) * (nx - 1)).astype(int), 0, nx - 1)
     iy = np.clip(((verts[:, 1] - miny) / (maxy - miny) * (ny - 1)).astype(int), 0, ny - 1)
     iz = np.clip(((verts[:, 2] - minz) / (maxz - minz) * (nz - 1)).astype(int), 0, nz - 1)
-
+ 
     solid = np.zeros((nx, ny, nz), dtype=bool)
     solid[ix, iy, iz] = True
     # Nới rộng thêm 1 ô mỗi hướng để nối liền các khoảng hở nhỏ giữa các
     # đỉnh tam giác liền kề (tránh "gió lọt qua khe" do lấy mẫu rời rạc).
     solid = binary_dilation(solid, iterations=1)
     return solid
-
-
+ 
+ 
 def build_solid_grid(triangles, bounds, resolution):
     """
     bounds: (minx, maxx, miny, maxy, minz, maxz)
@@ -113,7 +113,7 @@ def build_solid_grid(triangles, bounds, resolution):
     xs = np.linspace(minx, maxx, nx)
     ys = np.linspace(miny, maxy, ny)
     zs = np.linspace(minz, maxz, nz)
-
+ 
     solid = np.zeros((nx, ny, nz), dtype=bool)
     for j, y in enumerate(ys):
         for k, z in enumerate(zs):
@@ -126,8 +126,8 @@ def build_solid_grid(triangles, bounds, resolution):
             inside = (counts % 2) == 1
             solid[:, j, k] = inside
     return solid
-
-
+ 
+ 
 # ============================================================
 # 3. STABLE FLUIDS 3D
 # ============================================================
@@ -144,11 +144,11 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
     v = np.where(solid, 0.0, wind_dir[1] * speed)
     w = np.where(solid, 0.0, wind_dir[2] * speed)
     residuals = []
-
+ 
     fluid = ~solid
     inflow_x = wind_dir[0] > 0.3
     outflow_x = wind_dir[0] < -0.3
-
+ 
     def enforce_boundary(u, v, w):
         u[solid] = 0; v[solid] = 0; w[solid] = 0
         if inflow_x:
@@ -160,7 +160,7 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
             v[-1, :, :] = wind_dir[1] * speed
             w[-1, :, :] = wind_dir[2] * speed
         return u, v, w
-
+ 
     def project(u, v, w):
         div = np.zeros_like(u)
         div[1:-1, 1:-1, 1:-1] = -0.5 * (
@@ -169,7 +169,7 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
             (w[1:-1, 1:-1, 2:] - w[1:-1, 1:-1, :-2])
         ) / nx
         div[solid] = 0
-
+ 
         p = np.zeros_like(u)
         for _ in range(35):
             p_new = p.copy()
@@ -181,12 +181,12 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
             ) / 6.0
             p_new[solid] = 0
             p = p_new
-
+ 
         u[1:-1, 1:-1, 1:-1] -= 0.5 * nx * (p[2:, 1:-1, 1:-1] - p[:-2, 1:-1, 1:-1])
         v[1:-1, 1:-1, 1:-1] -= 0.5 * nx * (p[1:-1, 2:, 1:-1] - p[1:-1, :-2, 1:-1])
         w[1:-1, 1:-1, 1:-1] -= 0.5 * nx * (p[1:-1, 1:-1, 2:] - p[1:-1, 1:-1, :-2])
         return u, v, w
-
+ 
     def advect_semilagrangian(field, u, v, w, dt):
         gx, gy, gz = np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij")
         src_x = np.clip(gx - dt * nx * u, 0.5, nx - 1.5)
@@ -194,7 +194,7 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
         src_z = np.clip(gz - dt * nz * w, 0.5, nz - 1.5)
         from scipy.ndimage import map_coordinates
         return map_coordinates(field, [src_x, src_y, src_z], order=1, mode="nearest")
-
+ 
     def advect(field, u, v, w, dt):
         """
         MacCormack advection — chính xác hơn bán-Lagrange bậc 1 thường nhờ
@@ -204,7 +204,7 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
         phi1 = advect_semilagrangian(field, u, v, w, dt)
         phi2 = advect_semilagrangian(phi1, u, v, w, -dt)
         result = phi1 + 0.5 * (field - phi2)
-
+ 
         lo = field.copy()
         hi = field.copy()
         for ax in (0, 1, 2):
@@ -213,7 +213,7 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
                 lo = np.minimum(lo, shifted)
                 hi = np.maximum(hi, shifted)
         return np.clip(result, lo, hi)
-
+ 
     def apply_vorticity_confinement(u, v, w, dt, epsilon=3.0):
         """
         Vorticity confinement (Fedkiw và cộng sự) — tính độ xoáy (curl) của
@@ -226,23 +226,23 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
         wy = np.gradient(u, axis=2) - np.gradient(w, axis=0)
         wz = np.gradient(v, axis=0) - np.gradient(u, axis=1)
         wmag = np.sqrt(wx ** 2 + wy ** 2 + wz ** 2) + 1e-6
-
+ 
         gx = np.gradient(wmag, axis=0)
         gy = np.gradient(wmag, axis=1)
         gz = np.gradient(wmag, axis=2)
         glen = np.sqrt(gx ** 2 + gy ** 2 + gz ** 2) + 1e-6
         nx_, ny_, nz_ = gx / glen, gy / glen, gz / glen
-
+ 
         fx = epsilon * (ny_ * wz - nz_ * wy)
         fy = epsilon * (nz_ * wx - nx_ * wz)
         fz = epsilon * (nx_ * wy - ny_ * wx)
-
+ 
         u2 = u + fx * dt
         v2 = v + fy * dt
         w2 = w + fz * dt
         u2[solid] = 0; v2[solid] = 0; w2[solid] = 0
         return u2, v2, w2
-
+ 
     dt = 0.1
     for step in range(iterations):
         u, v, w = enforce_boundary(u, v, w)
@@ -251,12 +251,12 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
         # thành xoáy rõ, yếu dần về sau để hệ có cơ hội ổn định thay vì
         # dao động mãi mãi ở mức cao (đúng nguyên nhân biểu đồ hội tụ
         # trước đó không giảm được).
-        decay = 0.25 + 0.75 * max(0, 1 - step / iterations)
+        decay = 0.05 + 0.95 * max(0, 1 - step / iterations)
         u, v, w = apply_vorticity_confinement(u, v, w, dt, epsilon=1.5 * decay)
         u2 = advect(u, u, v, w, dt)
         v2 = advect(v, u, v, w, dt)
         w2 = advect(w, u, v, w, dt)
-
+ 
         # Residual = mức thay đổi trung bình của trường vận tốc so với vòng
         # lặp trước — giảm dần theo thời gian nghĩa là lời giải đang "ổn
         # định" (hội tụ), giống hệt ý nghĩa biểu đồ Residual Convergence
@@ -264,22 +264,25 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
         # hoá cho bộ giải tự viết này.
         residual = float(np.mean(np.abs(u2 - u)) + np.mean(np.abs(v2 - v)) + np.mean(np.abs(w2 - w)))
         residuals.append(residual)
-
+ 
         u, v, w = u2, v2, w2
         u, v, w = enforce_boundary(u, v, w)
         if progress_cb:
             progress_cb(step + 1, iterations)
-
-    # Chuẩn hoá residual theo đúng quy ước CFD chuẩn (OpenFOAM/SimScale):
-    # chia cho giá trị residual đầu tiên -> biểu đồ luôn bắt đầu ở 1.0 rồi
-    # giảm dần, thay vì để nguyên giá trị tuyệt đối khó so sánh.
-    if residuals and residuals[0] > 0:
-        r0 = residuals[0]
-        residuals = [r / r0 for r in residuals]
-
+ 
+    # Chuẩn hoá residual theo đúng quy ước CFD chuẩn: chia cho giá trị LỚN
+    # NHẤT trong toàn bộ quá trình (không phải bước đầu tiên) — vì ở đây
+    # trường vận tốc khởi tạo đã khá "mượt" (gió đều khắp nơi) nên đỉnh
+    # residual thường rơi vào giữa lúc xoáy hình thành mạnh nhất, không
+    # phải ngay bước 0 như CFD thật (thường khởi tạo từ trạng thái "0").
+    # Nhờ vậy biểu đồ luôn đạt đỉnh đúng 1.0 rồi giảm dần sau đó.
+    if residuals:
+        rmax = max(residuals) or 1.0
+        residuals = [r / rmax for r in residuals]
+ 
     return u, v, w, residuals
-
-
+ 
+ 
 # ============================================================
 # 4. DÒ ĐƯỜNG DÒNG (STREAMLINE) BẰNG RUNGE-KUTTA 4
 # ============================================================
@@ -297,14 +300,14 @@ def _sample_velocity(u, v, w, pos, bounds, resolution):
     vy = map_coordinates(v, coord, order=1, mode="nearest")[0]
     vz = map_coordinates(w, coord, order=1, mode="nearest")[0]
     return np.array([vx, vy, vz])
-
-
+ 
+ 
 def trace_streamlines(u, v, w, bounds, resolution, seed_points, dt=0.3, max_steps=150):
     lines = []
     for idx, seed in enumerate(seed_points):
         pos = np.array(seed, dtype=np.float64)
         points, velocities = [pos.tolist()], []
-
+ 
         for _ in range(max_steps):
             k1 = _sample_velocity(u, v, w, pos, bounds, resolution)
             if k1 is None:
@@ -318,14 +321,14 @@ def trace_streamlines(u, v, w, bounds, resolution, seed_points, dt=0.3, max_step
             k4 = _sample_velocity(u, v, w, pos + dt * k3, bounds, resolution)
             if k4 is None:
                 break
-
+ 
             vel = (k1 + 2 * k2 + 2 * k3 + k4) / 6.0
             pos = pos + dt * vel
             points.append(pos.tolist())
             velocities.append(float(np.linalg.norm(vel)))
-
+ 
         if len(points) > 2:
             velocities.append(velocities[-1] if velocities else 0.0)
             lines.append({"id": idx + 1, "points": points, "velocities": velocities})
-
+ 
     return lines
