@@ -136,12 +136,14 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
     solid: mảng bool (nx,ny,nz)
     wind_dir: vector đơn vị (dx,dy,dz) hướng gió thổi TỚI (thường dy=0)
     speed: tốc độ gió tự do (đơn vị quy ước)
-    Trả về (u, v, w): 3 mảng vận tốc cùng shape với solid.
+    Trả về (u, v, w, residuals): 3 mảng vận tốc + danh sách residual từng
+    vòng lặp (dùng vẽ biểu đồ hội tụ).
     """
     nx, ny, nz = solid.shape
     u = np.where(solid, 0.0, wind_dir[0] * speed)
     v = np.where(solid, 0.0, wind_dir[1] * speed)
     w = np.where(solid, 0.0, wind_dir[2] * speed)
+    residuals = []
 
     fluid = ~solid
     inflow_x = wind_dir[0] > 0.3
@@ -249,12 +251,21 @@ def run_stable_fluids_3d(solid, wind_dir, speed, iterations=80, progress_cb=None
         u2 = advect(u, u, v, w, dt)
         v2 = advect(v, u, v, w, dt)
         w2 = advect(w, u, v, w, dt)
+
+        # Residual = mức thay đổi trung bình của trường vận tốc so với vòng
+        # lặp trước — giảm dần theo thời gian nghĩa là lời giải đang "ổn
+        # định" (hội tụ), giống hệt ý nghĩa biểu đồ Residual Convergence
+        # của các phần mềm CFD thật (SimScale/OpenFOAM), chỉ là đơn giản
+        # hoá cho bộ giải tự viết này.
+        residual = float(np.mean(np.abs(u2 - u)) + np.mean(np.abs(v2 - v)) + np.mean(np.abs(w2 - w)))
+        residuals.append(residual)
+
         u, v, w = u2, v2, w2
         u, v, w = enforce_boundary(u, v, w)
         if progress_cb:
             progress_cb(step + 1, iterations)
 
-    return u, v, w
+    return u, v, w, residuals
 
 
 # ============================================================

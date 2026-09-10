@@ -75,7 +75,7 @@ def run_simulation_job(job_id, stl_bytes, wind_dir, speed, resolution, iteration
         def progress_cb(step, total):
             jobs[job_id]["progress"] = f"{step}/{total}"
 
-        u, v, w = run_stable_fluids_3d(solid, wind_dir, speed, iterations=iterations, progress_cb=progress_cb)
+        u, v, w, residuals = run_stable_fluids_3d(solid, wind_dir, speed, iterations=iterations, progress_cb=progress_cb)
 
         jobs[job_id]["status"] = "tracing_streamlines"
         minx, maxx, miny, maxy, minz, maxz = bounds
@@ -91,7 +91,7 @@ def run_simulation_job(job_id, stl_bytes, wind_dir, speed, resolution, iteration
         lines = trace_streamlines(u, v, w, bounds, resolution, seeds)
 
         jobs[job_id]["status"] = "done"
-        jobs[job_id]["result"] = lines
+        jobs[job_id]["result"] = {"lines": lines, "residuals": residuals}
     except Exception as e:
         jobs[job_id]["status"] = "error"
         jobs[job_id]["error"] = str(e)
